@@ -72,3 +72,86 @@ CONTROL_MARKERS = (
     "reveal credential",
 )
 
+
+@allow_storage
+@dataclass
+class ProviderProfile:
+    owner: Address
+    name: str
+    summary: str
+    status: u8
+    created_at: u256
+    sealed_at: u256
+    evidence_ids: DynArray[u256]
+    profile_hash: str
+
+
+@allow_storage
+@dataclass
+class EvidenceSource:
+    profile_id: u256
+    label: str
+    url: str
+
+
+@allow_storage
+@dataclass
+class Task:
+    creator: Address
+    title: str
+    description: str
+    budget: u256
+    max_team_size: u8
+    bidding_deadline: u256
+    status: u8
+    created_at: u256
+    sealed_at: u256
+    closed_at: u256
+    solved_at: u256
+    requirement_ids: DynArray[u256]
+    bid_ids: DynArray[u256]
+    selected_bid_ids: DynArray[u256]
+    total_cost: u256
+    definition_hash: str
+    solution_hash: str
+    reason: str
+    admission_mode: u8
+    admitted_profile_ids: DynArray[u256]
+    matrix_hash: str
+
+
+@allow_storage
+@dataclass
+class Requirement:
+    task_id: u256
+    label: str
+    description: str
+    min_coverage: u8
+
+
+@allow_storage
+@dataclass
+class Bid:
+    task_id: u256
+    profile_id: u256
+    bidder: Address
+    price: u256
+    status: u8
+    created_at: u256
+    qualification_ids: DynArray[u256]
+
+
+@allow_storage
+@dataclass
+class Qualification:
+    task_id: u256
+    bid_id: u256
+    requirement_id: u256
+    resolver: Address
+    verdict: u8
+    reason: str
+    evidence: str
+    source_url: str
+    resolved_at: u256
+    receipt_hash: str
+
