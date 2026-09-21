@@ -474,3 +474,124 @@ class Optima(gl.Contract):
         if value is None:
             raise gl.vm.UserError(f"{ERR_EXPECTED}: unknown qualification {qualification_id}")
         return value
+
+    def _profile_payload(self, profile_id: u256) -> str:
+        profile = self._provider(profile_id)
+        sources = []
+        for evidence_id in profile.evidence_ids:
+            evidence = self._evidence(evidence_id)
+            sources.append({"label": str(evidence.label), "url": str(evidence.url)})
+        return json.dumps(
+            {"name": str(profile.name), "summary": str(profile.summary), "sources": sources},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _task_payload(self, task_id: u256) -> str:
+        task = self._task(task_id)
+        requirements = []
+        for requirement_id in task.requirement_ids:
+            requirement = self._requirement(requirement_id)
+            requirements.append({
+                "label": str(requirement.label),
+                "description": str(requirement.description),
+                "min_coverage": int(requirement.min_coverage),
+            })
+        admitted = []
+        for profile_id in task.admitted_profile_ids:
+            profile = self._provider(profile_id)
+            admitted.append({
+                "profile_id": int(profile_id),
+                "profile_hash": str(profile.profile_hash),
+                "owner": str(profile.owner),
+            })
+        return json.dumps({
+            "title": str(task.title),
+            "description": str(task.description),
+            "budget": int(task.budget),
+            "max_team_size": int(task.max_team_size),
+            "bidding_deadline": int(task.bidding_deadline),
+            "requirements": requirements,
+            "admission_mode": int(task.admission_mode),
+            "admitted_profiles": admitted,
+        }, sort_keys=True, separators=(",", ":"))
+
+    def _qualification_receipt_payload(
+        self,
+        task_id: u256,
+        bid_id: u256,
+        requirement_id: u256,
+        verdict: int,
+        reason: str,
+        evidence: str,
+        source_url: str,
+        resolved_at: int,
+    ) -> str:
+        task = self._task(task_id)
+        bid = self._bid(bid_id)
+        profile = self._provider(bid.profile_id)
+        return json.dumps({
+            "task_definition_hash": str(task.definition_hash),
+            "bid_id": int(bid_id),
+            "profile_id": int(bid.profile_id),
+            "profile_hash": str(profile.profile_hash),
+            "bidder": str(bid.bidder),
+            "price": int(bid.price),
+            "requirement_id": int(requirement_id),
+            "verdict": int(verdict),
+            "reason": str(reason),
+            "evidence": str(evidence),
+            "source_url": str(source_url),
+            "resolved_at": int(resolved_at),
+        }, sort_keys=True, separators=(",", ":"))
+
+    def _matrix_payload(self, task_id: u256, active_ids) -> str:
+        task = self._task(task_id)
+        rows = []
+        for raw_bid_id in active_ids:
+            bid = self._bid(u256(raw_bid_id))
+            profile = self._provider(bid.profile_id)
+            cells = []
+            for requirement_id in task.requirement_ids:
+                qid = self._qualification_id_for(bid, requirement_id)
+                record = self._qualification(u256(qid))
+                cells.append({
+                    "requirement_id": int(requirement_id),
+                    "qualification_id": int(qid),
+                    "receipt_hash": str(record.receipt_hash),
+                    "verdict": int(record.verdict),
+                })
+            rows.append({
+                "bid_id": int(raw_bid_id),
+                "profile_id": int(bid.profile_id),
+                "profile_hash": str(profile.profile_hash),
+                "bidder": str(bid.bidder),
+                "price": int(bid.price),
+                "qualifications": cells,
+            })
+        return json.dumps({
+            "task_id": int(task_id),
+            "definition_hash": str(task.definition_hash),
+            "bids": rows,
+        }, sort_keys=True, separators=(",", ":"))
+
+    def _solution_payload(self, task_id: u256) -> str:
+        task = self._task(task_id)
+        selected = []
+        for bid_id in task.selected_bid_ids:
+            bid = self._bid(bid_id)
+            profile = self._provider(bid.profile_id)
+            selected.append({
+                "bid_id": int(bid_id),
+                "profile_id": int(bid.profile_id),
+                "profile_hash": str(profile.profile_hash),
+                "bidder": str(bid.bidder),
+                "price": int(bid.price),
+            })
+        return json.dumps({
+            "task_hash": str(task.definition_hash),
+            "matrix_hash": str(task.matrix_hash),
+            "status": int(task.status),
+            "total_cost": int(task.total_cost),
+            "selected": selected,
+        }, sort_keys=True, separators=(",", ":"))
