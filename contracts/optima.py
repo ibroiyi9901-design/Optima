@@ -595,3 +595,16 @@ class Optima(gl.Contract):
             "total_cost": int(task.total_cost),
             "selected": selected,
         }, sort_keys=True, separators=(",", ":"))
+
+    def _qualification_id_for(self, bid: Bid, requirement_id: u256) -> int:
+        for qualification_id in bid.qualification_ids:
+            record = self._qualification(qualification_id)
+            if int(record.requirement_id) == int(requirement_id):
+                return int(qualification_id)
+        return 0
+
+    def _bid_qualified_for(self, bid: Bid, requirement_id: u256) -> bool:
+        qid = self._qualification_id_for(bid, requirement_id)
+        if qid == 0:
+            return False
+        return int(self._qualification(u256(qid)).verdict) == QUALIFIED
