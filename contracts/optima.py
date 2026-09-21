@@ -608,3 +608,77 @@ class Optima(gl.Contract):
         if qid == 0:
             return False
         return int(self._qualification(u256(qid)).verdict) == QUALIFIED
+
+    def _inspect_profile_once(self, profile: ProviderProfile, requirement: Requirement, include_sources: bool = False) -> dict:
+        readable = []
+        source_texts = []
+        for evidence_id in profile.evidence_ids:
+            evidence = self._evidence(evidence_id)
+            try:
+                page = gl.nondet.web.render(str(evidence.url), mode="text")
+                text = str(page)[:MAX_PAGE_CHARS_PER_SOURCE]
+            except Exception:
+                text = ""
+            source_texts.append(text)
+            if text.strip() != "":
+                readable.append({
+                    "source_index": len(source_texts) - 1,
+                    "label": str(evidence.label),
+                    "url": str(evidence.url),
+                    "text": text,
+                })
+
+        if len(readable) == 0:
+            result = {"verdict": UNAVAILABLE, "reason": "no registered public evidence source was readable", "evidence": "", "source_url": ""}
+            if include_sources:
+                result["source_texts"] = source_texts
+            return result
+
+        try:
+            raw = gl.nondet.exec_prompt(
+                qualification_prompt(
+                    str(profile.name),
+                    str(profile.summary),
+                    str(requirement.label),
+                    str(requirement.description),
+                    json.dumps(readable, ensure_ascii=True, separators=(",", ":")),
+                ),
+                response_format="json",
+            )
+            parsed = parse_json_object(raw)
+            verdict_text = clean_text(parsed.get("verdict", "AMBIGUOUS"), 40).upper()
+            verdict = {
+                "QUALIFIED": QUALIFIED,
+                "NOT_QUALIFIED": NOT_QUALIFIED,
+                "AMBIGUOUS": AMBIGUOUS,
+            }.get(verdict_text, AMBIGUOUS)
+            reason = clean_text(parsed.get("reason", ""), MAX_REASON_LEN)
+            raw_index = parsed.get("source_index", -1)
+            source_index = int(raw_index) if not isinstance(raw_index, bool) else -1
+            evidence = clean_text(parsed.get("evidence", ""), MAX_EVIDENCE_LEN)
+        except Exception as exc:
+            verdict = AMBIGUOUS
+            reason = clean_text(f"qualification analysis failed: {exc}", MAX_REASON_LEN)
+            source_index = -1
+            evidence = ""
+
+        source_url = ""
+        if verdict == QUALIFIED:
+            if source_index < 0 or source_index >= len(source_texts):
+                verdict = AMBIGUOUS
+                reason = "qualified result identified no registered source"
+                evidence = ""
+            elif evidence == "" or evidence not in clean_text(source_texts[source_index], MAX_PAGE_CHARS_PER_SOURCE):
+                verdict = AMBIGUOUS
+                reason = "qualified evidence was not a verbatim substring of the registered source"
+                evidence = ""
+            else:
+                evidence_id = profile.evidence_ids[source_index]
+                source_url = str(self._evidence(evidence_id).url)
+        else:
+            evidence = ""
+
+        result = {"verdict": verdict, "reason": reason, "evidence": evidence, "source_url": source_url}
+        if include_sources:
+            result["source_texts"] = source_texts
+        return result
