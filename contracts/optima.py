@@ -188,3 +188,31 @@ class IOptima:
         def resolve_qualification(self, task_id: u256, bid_id: u256, requirement_id: u256) -> u256: ...
         def solve_task(self, task_id: u256) -> None: ...
 
+
+class ProviderCreated(gl.Event):
+    def __init__(self, profile_id: u256, owner: Address, /, **blob): ...
+
+
+class ProviderSealed(gl.Event):
+    def __init__(self, profile_id: u256, /, **blob): ...
+
+
+class TaskCreated(gl.Event):
+    def __init__(self, task_id: u256, creator: Address, /, **blob): ...
+
+
+class TaskSealed(gl.Event):
+    def __init__(self, task_id: u256, /, **blob): ...
+
+
+class BidSubmitted(gl.Event):
+    def __init__(self, task_id: u256, bid_id: u256, bidder: Address, /, **blob): ...
+
+
+class QualificationResolved(gl.Event):
+    def __init__(self, task_id: u256, bid_id: u256, requirement_id: u256, /, **blob): ...
+
+
+class OptimaSolved(gl.Event):
+    def __init__(self, task_id: u256, status: u8, /, **blob): ...
+
