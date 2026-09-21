@@ -1,0 +1,12 @@
+.env
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+artifacts/
+node_modules/
+.venv-wsl/
+package-lock.json
+*.log
+*.pyc
+.DS_Store
