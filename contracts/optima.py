@@ -413,3 +413,64 @@ EVIDENCE_JSON
 {json.dumps(evidence, ensure_ascii=True)}
 """
 
+
+class Optima(gl.Contract):
+    """Consensus-qualified, deterministically selected multi-provider teams."""
+
+    providers: TreeMap[u256, ProviderProfile]
+    evidence_sources: TreeMap[u256, EvidenceSource]
+    tasks: TreeMap[u256, Task]
+    requirements: TreeMap[u256, Requirement]
+    bids: TreeMap[u256, Bid]
+    qualifications: TreeMap[u256, Qualification]
+
+    next_provider_id: u256
+    next_evidence_id: u256
+    next_task_id: u256
+    next_requirement_id: u256
+    next_bid_id: u256
+    next_qualification_id: u256
+
+    def __init__(self):
+        self.next_provider_id = u256(1)
+        self.next_evidence_id = u256(1)
+        self.next_task_id = u256(1)
+        self.next_requirement_id = u256(1)
+        self.next_bid_id = u256(1)
+        self.next_qualification_id = u256(1)
+
+    def _provider(self, profile_id: u256) -> ProviderProfile:
+        value = self.providers.get(profile_id)
+        if value is None:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: unknown provider {profile_id}")
+        return value
+
+    def _evidence(self, evidence_id: u256) -> EvidenceSource:
+        value = self.evidence_sources.get(evidence_id)
+        if value is None:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: unknown evidence source {evidence_id}")
+        return value
+
+    def _task(self, task_id: u256) -> Task:
+        value = self.tasks.get(task_id)
+        if value is None:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: unknown task {task_id}")
+        return value
+
+    def _requirement(self, requirement_id: u256) -> Requirement:
+        value = self.requirements.get(requirement_id)
+        if value is None:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: unknown requirement {requirement_id}")
+        return value
+
+    def _bid(self, bid_id: u256) -> Bid:
+        value = self.bids.get(bid_id)
+        if value is None:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: unknown bid {bid_id}")
+        return value
+
+    def _qualification(self, qualification_id: u256) -> Qualification:
+        value = self.qualifications.get(qualification_id)
+        if value is None:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: unknown qualification {qualification_id}")
+        return value
