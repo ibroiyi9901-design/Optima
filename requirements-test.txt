@@ -1,0 +1,5 @@
+# Stable Direct Mode harness used by the Studionet/61999 contract family.
+# scripts/prepare_direct_mode.py adapts the renamed official rc7 runner bundle
+# to the cache filename expected by this stable harness.
+genlayer-test @ git+https://github.com/genlayerlabs/genlayer-testing-suite@v0.29.2
+pytest>=8.0,<9
