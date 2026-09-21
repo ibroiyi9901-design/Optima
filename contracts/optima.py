@@ -682,3 +682,61 @@ class Optima(gl.Contract):
         if include_sources:
             result["source_texts"] = source_texts
         return result
+
+    def _qualify_consensus(self, profile: ProviderProfile, requirement: Requirement) -> dict:
+        def leader_fn() -> dict:
+            return self._inspect_profile_once(profile, requirement, False)
+
+        def validator_fn(leader_result) -> bool:
+            if not isinstance(leader_result, gl.vm.Return):
+                return False
+            leader = leader_result.calldata
+            if not isinstance(leader, dict):
+                return False
+            leader_verdict = leader.get("verdict")
+            if isinstance(leader_verdict, bool) or not isinstance(leader_verdict, int):
+                return False
+            if leader_verdict not in (QUALIFIED, NOT_QUALIFIED, AMBIGUOUS, UNAVAILABLE):
+                return False
+
+            try:
+                own = self._inspect_profile_once(profile, requirement, True)
+            except Exception:
+                return False
+            if int(own.get("verdict", AMBIGUOUS)) != int(leader_verdict):
+                return False
+
+            evidence = leader.get("evidence", "")
+            source_url = leader.get("source_url", "")
+            if not isinstance(evidence, str) or not isinstance(source_url, str):
+                return False
+            if leader_verdict != QUALIFIED:
+                return evidence == "" and source_url == ""
+
+            if evidence == "" or source_url == "":
+                return False
+
+            source_index = -1
+            index = 0
+            for evidence_id in profile.evidence_ids:
+                if str(self._evidence(evidence_id).url) == source_url:
+                    source_index = index
+                    break
+                index += 1
+            source_texts = own.get("source_texts", [])
+            if source_index < 0 or not isinstance(source_texts, list) or source_index >= len(source_texts):
+                return False
+            if evidence not in clean_text(source_texts[source_index], MAX_PAGE_CHARS_PER_SOURCE):
+                return False
+            try:
+                verdict = str(gl.nondet.exec_prompt(
+                    evidence_support_prompt(evidence, str(requirement.description)),
+                    response_format="text",
+                )).strip().upper()
+                return verdict == "PASS"
+            except Exception:
+                return False
+
+        return gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
+
+    @gl.public.write
