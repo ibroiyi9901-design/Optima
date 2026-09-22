@@ -1033,3 +1033,174 @@ class Optima(gl.Contract):
         task.closed_at = u256(now)
 
     @gl.public.write
+    def resolve_qualification(self, task_id: u256, bid_id: u256, requirement_id: u256) -> u256:
+        task = self._task(task_id)
+        bid = self._bid(bid_id)
+        requirement = self._requirement(requirement_id)
+        if int(task.status) != TASK_QUALIFYING:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: task is not qualifying bids")
+        if int(bid.task_id) != int(task_id) or int(requirement.task_id) != int(task_id):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bid and requirement must belong to task")
+        if int(bid.status) != BID_ACTIVE:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only active bids can be qualified")
+        existing_qid = self._qualification_id_for(bid, requirement_id)
+        if existing_qid != 0:
+            existing_record = self._qualification(u256(existing_qid))
+            if int(existing_record.verdict) != UNAVAILABLE:
+                raise gl.vm.UserError(f"{ERR_EXPECTED}: qualification already resolved")
+
+        profile = self._provider(bid.profile_id)
+        result = self._qualify_consensus(profile, requirement)
+        verdict = result.get("verdict", AMBIGUOUS)
+        if isinstance(verdict, bool) or not isinstance(verdict, int):
+            verdict = AMBIGUOUS
+        if verdict not in (QUALIFIED, NOT_QUALIFIED, AMBIGUOUS, UNAVAILABLE):
+            verdict = AMBIGUOUS
+        evidence = clean_text(result.get("evidence", ""), MAX_EVIDENCE_LEN)
+        source_url = clean_text(result.get("source_url", ""), MAX_URL_LEN)
+        if verdict != QUALIFIED:
+            evidence = ""
+            source_url = ""
+
+        qid = u256(existing_qid) if existing_qid != 0 else self.next_qualification_id
+        if existing_qid == 0:
+            self.next_qualification_id = u256(int(self.next_qualification_id) + 1)
+        record = self.qualifications.get_or_insert_default(qid)
+        record.task_id = task_id
+        record.bid_id = bid_id
+        record.requirement_id = requirement_id
+        record.resolver = gl.message.sender_address
+        record.verdict = u8(verdict)
+        record.reason = clean_text(result.get("reason", ""), MAX_REASON_LEN)
+        record.evidence = evidence
+        record.source_url = source_url
+        record.resolved_at = u256(message_timestamp())
+        record.receipt_hash = Keccak256(self._qualification_receipt_payload(
+            task_id,
+            bid_id,
+            requirement_id,
+            verdict,
+            record.reason,
+            evidence,
+            source_url,
+            int(record.resolved_at),
+        ).encode("utf-8")).hexdigest()
+        if existing_qid == 0:
+            bid.qualification_ids.append(qid)
+        QualificationResolved(task_id, bid_id, requirement_id, verdict=u8(verdict), qualification_id=qid).emit()
+        return qid
+
+    def _active_bid_ids(self, task: Task):
+        result = []
+        for bid_id in task.bid_ids:
+            if int(self._bid(bid_id).status) == BID_ACTIVE:
+                result.append(int(bid_id))
+        return result
+
+    def _matrix_complete(self, task: Task, active_ids) -> bool:
+        for raw_bid_id in active_ids:
+            bid = self._bid(u256(raw_bid_id))
+            for requirement_id in task.requirement_ids:
+                if self._qualification_id_for(bid, requirement_id) == 0:
+                    return False
+        return True
+
+    def _candidate_valid(self, task: Task, candidate) -> bool:
+        for requirement_id in task.requirement_ids:
+            requirement = self._requirement(requirement_id)
+            coverage = 0
+            for raw_bid_id in candidate:
+                if self._bid_qualified_for(self._bid(u256(raw_bid_id)), requirement_id):
+                    coverage += 1
+            if coverage < int(requirement.min_coverage):
+                return False
+        return True
+
+    def _lex_lower(self, left, right) -> bool:
+        if len(right) == 0:
+            return True
+        limit = len(left)
+        if len(right) < limit:
+            limit = len(right)
+        for index in range(limit):
+            if left[index] < right[index]:
+                return True
+            if left[index] > right[index]:
+                return False
+        return len(left) < len(right)
+
+    def _choose_optima(self, task: Task, active_ids):
+        best = []
+        best_cost = 0
+        best_count = 0
+        n = len(active_ids)
+
+        for mask in range(1, 1 << n):
+            candidate = []
+            total_cost = 0
+            for index in range(n):
+                if mask & (1 << index):
+                    bid_id = active_ids[index]
+                    candidate.append(bid_id)
+                    total_cost += int(self._bid(u256(bid_id)).price)
+
+            count = len(candidate)
+            if count > int(task.max_team_size) or total_cost > int(task.budget):
+                continue
+            if not self._candidate_valid(task, candidate):
+                continue
+
+            better = False
+            if len(best) == 0:
+                better = True
+            elif total_cost < best_cost:
+                better = True
+            elif total_cost == best_cost and count < best_count:
+                better = True
+            elif total_cost == best_cost and count == best_count and self._lex_lower(candidate, best):
+                better = True
+
+            if better:
+                best = candidate
+                best_cost = total_cost
+                best_count = count
+
+        return {"bid_ids": best, "cost": best_cost}
+
+    @gl.public.write
+    def solve_task(self, task_id: u256) -> None:
+        task = self._task(task_id)
+        if int(task.status) != TASK_QUALIFYING:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: task is not ready for selection")
+
+        active_ids = self._active_bid_ids(task)
+        if not self._matrix_complete(task, active_ids):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: qualification matrix incomplete")
+
+        task.matrix_hash = Keccak256(self._matrix_payload(task_id, active_ids).encode("utf-8")).hexdigest()
+
+        solution = self._choose_optima(task, active_ids)
+        selected = solution["bid_ids"]
+        total_cost = int(solution["cost"])
+
+        if len(selected) == 0:
+            task.status = u8(TASK_UNSATISFIABLE)
+            task.total_cost = u256(0)
+            task.reason = "no active subset satisfies every frozen requirement within budget and team-size bounds"
+        else:
+            task.status = u8(TASK_SOLVED)
+            task.total_cost = u256(total_cost)
+            task.reason = "lowest-cost complete team selected deterministically; ties prefer fewer members then lower bid ids"
+            for raw_bid_id in active_ids:
+                bid = self._bid(u256(raw_bid_id))
+                if raw_bid_id in selected:
+                    bid.status = u8(BID_SELECTED)
+                    task.selected_bid_ids.append(u256(raw_bid_id))
+                else:
+                    bid.status = u8(BID_NOT_SELECTED)
+
+        task.solved_at = u256(message_timestamp())
+        task.solution_hash = Keccak256(self._solution_payload(task_id).encode("utf-8")).hexdigest()
+        OptimaSolved(task_id, task.status, total_cost=task.total_cost, solution_hash=str(task.solution_hash)).emit()
+
+    @gl.public.view
