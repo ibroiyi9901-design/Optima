@@ -421,3 +421,213 @@ def test_terminal_qualification_receipt_cannot_be_rewritten(direct_vm, direct_de
         contract.resolve_qualification(tid, bid_id, reqs[0])
     assert contract.get_qualification(qid)["receipt_hash"] == before
 
+
+def test_solution_bundle_commits_full_matrix_provenance(direct_vm, direct_deploy):
+    direct_vm.warp(BASE)
+    contract = direct_deploy(CONTRACT)
+    creator, alice, bob = addr("creator"), addr("alice"), addr("bob")
+    pa = profile(direct_vm, contract, alice, "alice")
+    pb = profile(direct_vm, contract, bob, "bob")
+    tid, reqs = task(direct_vm, contract, creator, [("CAPABILITY", "Provider demonstrates the required capability using sealed public evidence.", 1)])
+    ba = bid(direct_vm, contract, alice, tid, pa, 10)
+    bb = bid(direct_vm, contract, bob, tid, pb, 20)
+    close(direct_vm, contract, tid)
+    qualify(direct_vm, contract, tid, ba, reqs[0], "alice", "Public portfolio demonstrates the required capability.")
+    qualify(direct_vm, contract, tid, bb, reqs[0], "bob", "Public portfolio demonstrates the required capability.")
+    contract.solve_task(tid)
+    solution = contract.get_solution(tid)
+    assert len(solution["matrix_hash"]) == 64
+    assert contract.is_solution_bundle(tid, solution["definition_hash"], solution["matrix_hash"], solution["solution_hash"]) is True
+    assert contract.is_solution_bundle(tid, "00" * 32, solution["matrix_hash"], solution["solution_hash"]) is False
+    assert contract.is_solution_bundle(tid, solution["definition_hash"], "00" * 32, solution["solution_hash"]) is False
+    assert contract.is_solution_bundle(tid, solution["definition_hash"], solution["matrix_hash"], "00" * 32) is False
+
+
+def test_losing_qualification_receipt_changes_matrix_and_solution_hash(direct_vm, direct_deploy, tmp_path):
+    """The final receipt commits the complete matrix, including losing bids."""
+    direct_vm.warp(BASE)
+
+    second_contract_path = tmp_path / "optima_second_deployment.py"
+    second_contract_path.write_bytes(Path(CONTRACT).read_bytes())
+
+    def run_scenario(loser_verdict, contract_path):
+        contract = direct_deploy(contract_path)
+        creator, winner_owner, loser_owner = addr("creator"), addr("winner"), addr("loser")
+        winner_profile = profile(direct_vm, contract, winner_owner, "winner")
+        loser_profile = profile(direct_vm, contract, loser_owner, "loser")
+        task_id, requirement_ids = task(direct_vm, contract, creator, [
+            ("CAPABILITY", "Provider demonstrates the required capability using sealed public evidence.", 1),
+        ], budget=100, max_team=1)
+        winner_bid = bid(direct_vm, contract, winner_owner, task_id, winner_profile, 10)
+        loser_bid = bid(direct_vm, contract, loser_owner, task_id, loser_profile, 20)
+        close(direct_vm, contract, task_id)
+
+        qualify(direct_vm, contract, task_id, winner_bid, requirement_ids[0], "winner", "Public portfolio demonstrates the required capability.")
+        if loser_verdict == "NOT_QUALIFIED":
+            reject(direct_vm, contract, task_id, loser_bid, requirement_ids[0], "loser")
+        else:
+            direct_vm.clear_mocks()
+            direct_vm.mock_web(r".*loser\.example\.com/evidence.*", {"status": 200, "body": "Public page is inconclusive."})
+            direct_vm.mock_llm(CLASSIFIER, result("AMBIGUOUS", "", "public evidence is inconclusive", -1))
+            qid = contract.resolve_qualification(task_id, loser_bid, requirement_ids[0])
+            assert contract.get_qualification(qid)["verdict_name"] == "AMBIGUOUS"
+            assert direct_vm.run_validator() is True
+
+        contract.solve_task(task_id)
+        return contract, task_id, contract.get_solution(task_id), contract.get_qualification(
+            contract.get_bid(loser_bid)["qualification_ids"][0]
+        )
+
+    snapshot = direct_vm.snapshot()
+    contract_a, task_a, solution_a, losing_receipt_a = run_scenario("NOT_QUALIFIED", CONTRACT)
+    bundle_a = contract_a.is_solution_bundle(task_a, solution_a["definition_hash"], solution_a["matrix_hash"], solution_a["solution_hash"])
+    direct_vm.revert(snapshot)
+    # gltest 0.29 keeps a one-contract-per-module registry. Clear that
+    # harness-only registry so this regression can exercise two fresh
+    # deployments without changing production code or protocol state.
+    import genlayer.gl.genvm_contracts as genvm_contracts
+    genvm_contracts.__known_contract__ = None
+    contract_b, task_b, solution_b, losing_receipt_b = run_scenario("AMBIGUOUS", str(second_contract_path))
+
+    assert solution_a["definition_hash"] == solution_b["definition_hash"]
+    assert solution_a["selected"] == solution_b["selected"]
+    assert solution_a["total_cost"] == solution_b["total_cost"]
+    assert losing_receipt_a["receipt_hash"] != losing_receipt_b["receipt_hash"]
+    assert solution_a["matrix_hash"] != solution_b["matrix_hash"]
+    assert solution_a["solution_hash"] != solution_b["solution_hash"]
+    assert bundle_a is True
+    assert contract_b.is_solution_bundle(task_b, solution_b["definition_hash"], solution_b["matrix_hash"], solution_b["solution_hash"]) is True
+
+
+def test_positive_qualification_is_source_anchored_and_rechecked(direct_vm, direct_deploy):
+    direct_vm.warp(BASE)
+    contract = direct_deploy(CONTRACT)
+    creator, alice = addr("creator"), addr("alice")
+    pid = profile(direct_vm, contract, alice, "alice")
+    tid, reqs = task(direct_vm, contract, creator, [
+        ("SOLIDITY", "Provider demonstrates completed Solidity smart-contract security work.", 1)
+    ])
+    bid_id = bid(direct_vm, contract, alice, tid, pid, 20)
+    close(direct_vm, contract, tid)
+    evidence = "Public portfolio demonstrates production Solidity security reviews."
+    qid = qualify(direct_vm, contract, tid, bid_id, reqs[0], "alice", evidence)
+    receipt = contract.get_qualification(qid)
+    assert receipt["evidence"] == evidence
+    assert receipt["source_url"] == "https://alice.example.com/evidence"
+
+
+def test_validator_rejects_forged_qualified_leader(direct_vm, direct_deploy):
+    direct_vm.warp(BASE)
+    contract = direct_deploy(CONTRACT)
+    creator, alice = addr("creator"), addr("alice")
+    pid = profile(direct_vm, contract, alice, "alice")
+    tid, reqs = task(direct_vm, contract, creator, [
+        ("SOLIDITY", "Provider demonstrates completed Solidity smart-contract security work.", 1)
+    ])
+    bid_id = bid(direct_vm, contract, alice, tid, pid, 20)
+    close(direct_vm, contract, tid)
+    evidence = "Public portfolio demonstrates production Solidity security reviews."
+    qualify(direct_vm, contract, tid, bid_id, reqs[0], "alice", evidence)
+    direct_vm.clear_mocks()
+    direct_vm.mock_web(r".*alice\.example\.com/evidence.*", {"status": 200, "body": "Unrelated profile."})
+    direct_vm.mock_llm(CLASSIFIER, result("NOT_QUALIFIED", "", "not established", -1))
+    assert direct_vm.run_validator() is False
+
+
+def test_solver_refuses_selectively_incomplete_matrix(direct_vm, direct_deploy):
+    direct_vm.warp(BASE)
+    contract = direct_deploy(CONTRACT)
+    creator, alice = addr("creator"), addr("alice")
+    pid = profile(direct_vm, contract, alice, "alice")
+    tid, _ = task(direct_vm, contract, creator, [
+        ("SOLIDITY", "Provider demonstrates completed Solidity smart-contract security work.", 1)
+    ])
+    bid(direct_vm, contract, alice, tid, pid, 20)
+    close(direct_vm, contract, tid)
+    with direct_vm.expect_revert("qualification matrix incomplete"):
+        contract.solve_task(tid)
+
+
+def test_cheapest_complete_team_wins(direct_vm, direct_deploy):
+    direct_vm.warp(BASE)
+    contract = direct_deploy(CONTRACT)
+    creator = addr("creator")
+    alice, bob, carol = addr("alice"), addr("bob"), addr("carol")
+    pa = profile(direct_vm, contract, alice, "alice")
+    pb = profile(direct_vm, contract, bob, "bob")
+    pc = profile(direct_vm, contract, carol, "carol")
+    tid, reqs = task(direct_vm, contract, creator, [
+        ("SOLIDITY", "Provider demonstrates completed Solidity smart-contract security work.", 1),
+        ("ECONOMICS", "Provider demonstrates completed mechanism-design or economic modelling work.", 1),
+    ], budget=100, max_team=2)
+    ba = bid(direct_vm, contract, alice, tid, pa, 20)
+    bb = bid(direct_vm, contract, bob, tid, pb, 25)
+    bc = bid(direct_vm, contract, carol, tid, pc, 10)
+    close(direct_vm, contract, tid)
+    sol = "Public portfolio demonstrates production Solidity security reviews."
+    econ = "Public portfolio demonstrates mechanism-design and economic modelling work."
+    qualify(direct_vm, contract, tid, ba, reqs[0], "alice", sol)
+    reject(direct_vm, contract, tid, ba, reqs[1], "alice")
+    reject(direct_vm, contract, tid, bb, reqs[0], "bob")
+    qualify(direct_vm, contract, tid, bb, reqs[1], "bob", econ)
+    qualify(direct_vm, contract, tid, bc, reqs[0], "carol", sol)
+    reject(direct_vm, contract, tid, bc, reqs[1], "carol")
+    contract.solve_task(tid)
+    solution = contract.get_solution(tid)
+    assert solution["status_name"] == "SOLVED"
+    assert solution["total_cost"] == 35
+    assert [item["bid_id"] for item in solution["selected"]] == [bb, bc]
+    assert len(solution["solution_hash"]) == 64
+    assert contract.is_solution(tid, solution["definition_hash"], solution["solution_hash"]) is True
+    assert contract.is_solution(tid, "00" * 32, solution["solution_hash"]) is False
+
+
+def test_redundancy_requires_distinct_qualified_bids(direct_vm, direct_deploy):
+    direct_vm.warp(BASE)
+    contract = direct_deploy(CONTRACT)
+    creator, alice, bob = addr("creator"), addr("alice"), addr("bob")
+    pa = profile(direct_vm, contract, alice, "alice")
+    pb = profile(direct_vm, contract, bob, "bob")
+    tid, reqs = task(direct_vm, contract, creator, [
+        ("SECURITY", "Provider demonstrates completed independent security review work.", 2)
+    ], budget=100, max_team=2)
+    ba = bid(direct_vm, contract, alice, tid, pa, 20)
+    bb = bid(direct_vm, contract, bob, tid, pb, 25)
+    close(direct_vm, contract, tid)
+    evidence = "Public portfolio demonstrates completed independent security review work."
+    qualify(direct_vm, contract, tid, ba, reqs[0], "alice", evidence)
+    qualify(direct_vm, contract, tid, bb, reqs[0], "bob", evidence)
+    contract.solve_task(tid)
+    solution = contract.get_solution(tid)
+    assert solution["total_cost"] == 45
+    assert len(solution["selected"]) == 2
+
+
+def test_unsatisfiable_when_complete_team_exceeds_budget(direct_vm, direct_deploy):
+    direct_vm.warp(BASE)
+    contract = direct_deploy(CONTRACT)
+    creator, alice, bob = addr("creator"), addr("alice"), addr("bob")
+    pa = profile(direct_vm, contract, alice, "alice")
+    pb = profile(direct_vm, contract, bob, "bob")
+    tid, reqs = task(direct_vm, contract, creator, [
+        ("SOLIDITY", "Provider demonstrates completed Solidity smart-contract security work.", 1),
+        ("ECONOMICS", "Provider demonstrates completed mechanism-design or economic modelling work.", 1),
+    ], budget=30, max_team=2)
+    ba = bid(direct_vm, contract, alice, tid, pa, 20)
+    bb = bid(direct_vm, contract, bob, tid, pb, 20)
+    close(direct_vm, contract, tid)
+    qualify(direct_vm, contract, tid, ba, reqs[0], "alice", "Public portfolio demonstrates production Solidity security reviews.")
+    reject(direct_vm, contract, tid, ba, reqs[1], "alice")
+    reject(direct_vm, contract, tid, bb, reqs[0], "bob")
+    qualify(direct_vm, contract, tid, bb, reqs[1], "bob", "Public portfolio demonstrates mechanism-design and economic modelling work.")
+    contract.solve_task(tid)
+    assert contract.get_solution(tid)["status_name"] == "UNSATISFIABLE"
+
+
+def test_status_dictionary_is_stable(direct_vm, direct_deploy):
+    direct_vm.warp(BASE)
+    contract = direct_deploy(CONTRACT)
+    d = contract.get_status_dictionary()
+    assert d["task"]["SOLVED"] == 3
+    assert d["qualification"]["QUALIFIED"] == 1
+    assert d["bid"]["SELECTED"] == 3
