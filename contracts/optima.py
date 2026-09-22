@@ -901,3 +901,135 @@ class Optima(gl.Contract):
         task.admitted_profile_ids.append(profile_id)
 
     @gl.public.write
+    def add_requirement(self, task_id: u256, label: str, description: str, min_coverage: u8) -> u256:
+        task = self._task(task_id)
+        if int(task.status) != TASK_DRAFT:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: task requirements are frozen")
+        if task.creator != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only task creator may add requirements")
+        if len(task.requirement_ids) >= MAX_REQUIREMENTS:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: requirement limit reached")
+
+        label = clean_text(label, MAX_REQUIREMENT_LABEL_LEN + 1)
+        description = clean_text(description, MAX_REQUIREMENT_DESCRIPTION_LEN + 1)
+        if len(label) == 0 or len(label) > MAX_REQUIREMENT_LABEL_LEN:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: requirement label is invalid")
+        if len(description) < 20 or len(description) > MAX_REQUIREMENT_DESCRIPTION_LEN:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: requirement description length is invalid")
+        if not passive_text(label) or not passive_text(description):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: requirement must be passive data")
+        if int(min_coverage) < 1 or int(min_coverage) > MAX_MIN_COVERAGE or int(min_coverage) > int(task.max_team_size):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: min_coverage is outside supported bounds")
+
+        requirement_id = self.next_requirement_id
+        self.next_requirement_id = u256(int(self.next_requirement_id) + 1)
+        requirement = self.requirements.get_or_insert_default(requirement_id)
+        requirement.task_id = task_id
+        requirement.label = label
+        requirement.description = description
+        requirement.min_coverage = min_coverage
+        task.requirement_ids.append(requirement_id)
+        return requirement_id
+
+    @gl.public.write
+    def seal_task(self, task_id: u256) -> None:
+        task = self._task(task_id)
+        if int(task.status) != TASK_DRAFT:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: task is not draft")
+        if task.creator != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only task creator may seal")
+        if len(task.requirement_ids) == 0:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: add at least one requirement")
+        if int(task.admission_mode) == ADMISSION_FROZEN_PROFILES:
+            if len(task.admitted_profile_ids) == 0:
+                raise gl.vm.UserError(f"{ERR_EXPECTED}: frozen admission requires an admitted profile")
+            admitted_owners = []
+            for profile_id in task.admitted_profile_ids:
+                owner = str(self._provider(profile_id).owner)
+                if owner not in admitted_owners:
+                    admitted_owners.append(owner)
+            for requirement_id in task.requirement_ids:
+                requirement = self._requirement(requirement_id)
+                if int(requirement.min_coverage) > len(admitted_owners):
+                    raise gl.vm.UserError(f"{ERR_EXPECTED}: admitted owners cannot satisfy min_coverage")
+        if message_timestamp() >= int(task.bidding_deadline):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bidding deadline has passed")
+        task.definition_hash = Keccak256(self._task_payload(task_id).encode("utf-8")).hexdigest()
+        task.status = u8(TASK_BIDDING)
+        task.sealed_at = u256(message_timestamp())
+        TaskSealed(task_id, definition_hash=str(task.definition_hash)).emit()
+
+    @gl.public.write
+    def cancel_task_draft(self, task_id: u256) -> None:
+        task = self._task(task_id)
+        if int(task.status) != TASK_DRAFT:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only a draft task may be cancelled")
+        if task.creator != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only task creator may cancel")
+        task.status = u8(TASK_CANCELLED)
+
+    @gl.public.write
+    def submit_bid(self, task_id: u256, profile_id: u256, price: u256) -> u256:
+        task = self._task(task_id)
+        profile = self._provider(profile_id)
+        if int(task.status) != TASK_BIDDING:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: task is not accepting bids")
+        if message_timestamp() >= int(task.bidding_deadline):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bidding deadline has passed")
+        if int(profile.status) != PROFILE_SEALED:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: provider profile must be sealed")
+        if int(task.admission_mode) == ADMISSION_FROZEN_PROFILES and not self._admission_contains(task, profile_id):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: provider profile is not admitted for this task")
+        if profile.owner != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only provider owner may bid")
+        if int(price) <= 0 or int(price) > int(task.budget):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bid price must be positive and within budget")
+        if len(task.bid_ids) >= MAX_BID_HISTORY:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bid history limit reached")
+        active_bid_count = 0
+        for existing_id in task.bid_ids:
+            if int(self._bid(existing_id).status) == BID_ACTIVE:
+                active_bid_count += 1
+        if active_bid_count >= MAX_BIDS:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bid limit reached")
+        for existing_id in task.bid_ids:
+            if self._bid(existing_id).bidder == gl.message.sender_address:
+                raise gl.vm.UserError(f"{ERR_EXPECTED}: one bid per provider address per task")
+
+        bid_id = self.next_bid_id
+        self.next_bid_id = u256(int(self.next_bid_id) + 1)
+        bid = self.bids.get_or_insert_default(bid_id)
+        bid.task_id = task_id
+        bid.profile_id = profile_id
+        bid.bidder = gl.message.sender_address
+        bid.price = price
+        bid.status = u8(BID_ACTIVE)
+        bid.created_at = u256(message_timestamp())
+        task.bid_ids.append(bid_id)
+        BidSubmitted(task_id, bid_id, gl.message.sender_address, price=price, profile_id=profile_id).emit()
+        return bid_id
+
+    @gl.public.write
+    def withdraw_bid(self, bid_id: u256) -> None:
+        bid = self._bid(bid_id)
+        task = self._task(bid.task_id)
+        if int(task.status) != TASK_BIDDING or message_timestamp() >= int(task.bidding_deadline):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bid can only be withdrawn before the bidding deadline")
+        if bid.bidder != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only bidder may withdraw")
+        if int(bid.status) != BID_ACTIVE:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bid is not active")
+        bid.status = u8(BID_WITHDRAWN)
+
+    @gl.public.write
+    def close_bidding(self, task_id: u256) -> None:
+        task = self._task(task_id)
+        if int(task.status) != TASK_BIDDING:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: task is not in bidding")
+        now = message_timestamp()
+        if now < int(task.bidding_deadline):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bidding deadline has not passed")
+        task.status = u8(TASK_QUALIFYING)
+        task.closed_at = u256(now)
+
+    @gl.public.write
