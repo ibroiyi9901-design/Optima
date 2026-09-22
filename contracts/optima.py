@@ -740,3 +740,164 @@ class Optima(gl.Contract):
         return gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
     @gl.public.write
+    def create_provider(self, name: str, summary: str) -> u256:
+        name = clean_text(name, MAX_PROFILE_NAME_LEN + 1)
+        summary = clean_text(summary, MAX_PROFILE_SUMMARY_LEN + 1)
+        if len(name) == 0 or len(name) > MAX_PROFILE_NAME_LEN:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: provider name is invalid")
+        if len(summary) < 20 or len(summary) > MAX_PROFILE_SUMMARY_LEN:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: provider summary length is invalid")
+        if not passive_text(name) or not passive_text(summary):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: provider metadata must be passive data")
+
+        profile_id = self.next_provider_id
+        self.next_provider_id = u256(int(self.next_provider_id) + 1)
+        profile = self.providers.get_or_insert_default(profile_id)
+        profile.owner = gl.message.sender_address
+        profile.name = name
+        profile.summary = summary
+        profile.status = u8(PROFILE_DRAFT)
+        profile.created_at = u256(message_timestamp())
+        profile.sealed_at = u256(0)
+        profile.profile_hash = ""
+        ProviderCreated(profile_id, gl.message.sender_address, name=name).emit()
+        return profile_id
+
+    @gl.public.write
+    def add_provider_evidence(self, profile_id: u256, label: str, url: str) -> u256:
+        profile = self._provider(profile_id)
+        if int(profile.status) != PROFILE_DRAFT:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: provider profile is not editable")
+        if profile.owner != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only provider owner may add evidence")
+        if len(profile.evidence_ids) >= MAX_EVIDENCE_SOURCES:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: evidence source limit reached")
+
+        label = clean_text(label, MAX_EVIDENCE_LABEL_LEN + 1)
+        if len(label) == 0 or len(label) > MAX_EVIDENCE_LABEL_LEN or not passive_text(label):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: evidence label is invalid")
+        url = validate_url(url)
+        for evidence_id in profile.evidence_ids:
+            if str(self._evidence(evidence_id).url) == url:
+                raise gl.vm.UserError(f"{ERR_EXPECTED}: duplicate evidence url")
+
+        evidence_id = self.next_evidence_id
+        self.next_evidence_id = u256(int(self.next_evidence_id) + 1)
+        evidence = self.evidence_sources.get_or_insert_default(evidence_id)
+        evidence.profile_id = profile_id
+        evidence.label = label
+        evidence.url = url
+        profile.evidence_ids.append(evidence_id)
+        return evidence_id
+
+    @gl.public.write
+    def seal_provider(self, profile_id: u256) -> None:
+        profile = self._provider(profile_id)
+        if int(profile.status) != PROFILE_DRAFT:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: provider profile is not draft")
+        if profile.owner != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only provider owner may seal")
+        if len(profile.evidence_ids) == 0:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: at least one public evidence source is required")
+        profile.profile_hash = Keccak256(self._profile_payload(profile_id).encode("utf-8")).hexdigest()
+        profile.status = u8(PROFILE_SEALED)
+        profile.sealed_at = u256(message_timestamp())
+        ProviderSealed(profile_id, profile_hash=str(profile.profile_hash)).emit()
+
+    @gl.public.write
+    def cancel_provider_draft(self, profile_id: u256) -> None:
+        profile = self._provider(profile_id)
+        if int(profile.status) != PROFILE_DRAFT:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only a draft provider may be cancelled")
+        if profile.owner != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only provider owner may cancel")
+        profile.status = u8(PROFILE_CANCELLED)
+
+    @gl.public.write
+    def create_task(self, title: str, description: str, budget: u256, max_team_size: u8, bidding_deadline: u256) -> u256:
+        title = clean_text(title, MAX_TASK_TITLE_LEN + 1)
+        description = clean_text(description, MAX_TASK_DESCRIPTION_LEN + 1)
+        if len(title) == 0 or len(title) > MAX_TASK_TITLE_LEN:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: task title is invalid")
+        if len(description) < 20 or len(description) > MAX_TASK_DESCRIPTION_LEN:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: task description length is invalid")
+        if not passive_text(title) or not passive_text(description):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: task metadata must be passive data")
+        if int(budget) <= 0:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: budget must be positive")
+        if int(max_team_size) < 1 or int(max_team_size) > MAX_TEAM_SIZE:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: max_team_size is outside supported bounds")
+
+        now = message_timestamp()
+        deadline = int(bidding_deadline)
+        if deadline < now + MIN_BIDDING_LEAD_SECONDS:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bidding deadline is too soon")
+        if deadline > now + MAX_BIDDING_WINDOW_SECONDS:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: bidding window is too long")
+
+        task_id = self.next_task_id
+        self.next_task_id = u256(int(self.next_task_id) + 1)
+        task = self.tasks.get_or_insert_default(task_id)
+        task.creator = gl.message.sender_address
+        task.title = title
+        task.description = description
+        task.budget = budget
+        task.max_team_size = max_team_size
+        task.bidding_deadline = bidding_deadline
+        task.status = u8(TASK_DRAFT)
+        task.created_at = u256(now)
+        task.sealed_at = u256(0)
+        task.closed_at = u256(0)
+        task.solved_at = u256(0)
+        task.total_cost = u256(0)
+        task.definition_hash = ""
+        task.solution_hash = ""
+        task.reason = ""
+        task.admission_mode = u8(ADMISSION_OPEN)
+        task.matrix_hash = ""
+        TaskCreated(task_id, gl.message.sender_address, deadline=bidding_deadline).emit()
+        return task_id
+
+    def _admission_contains(self, task: Task, profile_id: u256) -> bool:
+        for admitted_id in task.admitted_profile_ids:
+            if int(admitted_id) == int(profile_id):
+                return True
+        return False
+
+    @gl.public.write
+    def set_admission_mode(self, task_id: u256, mode: u8) -> None:
+        task = self._task(task_id)
+        if int(task.status) != TASK_DRAFT:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: admission policy is frozen")
+        if task.creator != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only task creator may configure admission")
+        if int(mode) not in (ADMISSION_OPEN, ADMISSION_FROZEN_PROFILES):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: unsupported admission mode")
+        if int(mode) == ADMISSION_OPEN and len(task.admitted_profile_ids) != 0:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: clear frozen profiles before opening admission")
+        task.admission_mode = mode
+
+    @gl.public.write
+    def admit_profile(self, task_id: u256, profile_id: u256) -> None:
+        task = self._task(task_id)
+        profile = self._provider(profile_id)
+        if int(task.status) != TASK_DRAFT:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: admission policy is frozen")
+        if task.creator != gl.message.sender_address:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: only task creator may admit profiles")
+        if int(task.admission_mode) != ADMISSION_FROZEN_PROFILES:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: frozen admission mode is required")
+        if int(profile.status) != PROFILE_SEALED:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: admitted profile must be sealed")
+        if len(task.admitted_profile_ids) >= MAX_BIDS:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: admitted profile limit reached")
+        if self._admission_contains(task, profile_id):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: profile already admitted")
+        for admitted_id in task.admitted_profile_ids:
+            if self._provider(admitted_id).owner == profile.owner:
+                raise gl.vm.UserError(f"{ERR_EXPECTED}: one admitted profile per provider owner")
+        if len(task.admitted_profile_ids) > 0 and int(profile_id) <= int(task.admitted_profile_ids[-1]):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: admitted profiles must be added in ascending order")
+        task.admitted_profile_ids.append(profile_id)
+
+    @gl.public.write
