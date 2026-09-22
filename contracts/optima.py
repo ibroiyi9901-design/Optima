@@ -1204,3 +1204,180 @@ class Optima(gl.Contract):
         OptimaSolved(task_id, task.status, total_cost=task.total_cost, solution_hash=str(task.solution_hash)).emit()
 
     @gl.public.view
+    def get_provider(self, profile_id: u256) -> dict:
+        profile = self._provider(profile_id)
+        return {
+            "id": int(profile_id),
+            "owner": str(profile.owner),
+            "name": str(profile.name),
+            "summary": str(profile.summary),
+            "status": int(profile.status),
+            "evidence_ids": [int(item) for item in profile.evidence_ids],
+            "profile_hash": str(profile.profile_hash),
+        }
+
+    @gl.public.view
+    def get_evidence_source(self, evidence_id: u256) -> dict:
+        evidence = self._evidence(evidence_id)
+        return {
+            "id": int(evidence_id),
+            "profile_id": int(evidence.profile_id),
+            "label": str(evidence.label),
+            "url": str(evidence.url),
+        }
+
+    @gl.public.view
+    def get_task(self, task_id: u256) -> dict:
+        task = self._task(task_id)
+        return {
+            "id": int(task_id),
+            "creator": str(task.creator),
+            "title": str(task.title),
+            "description": str(task.description),
+            "budget": int(task.budget),
+            "max_team_size": int(task.max_team_size),
+            "bidding_deadline": int(task.bidding_deadline),
+            "status": int(task.status),
+            "status_name": task_name(int(task.status)),
+            "requirement_ids": [int(item) for item in task.requirement_ids],
+            "admission_mode": int(task.admission_mode),
+            "admitted_profile_ids": [int(item) for item in task.admitted_profile_ids],
+            "bid_ids": [int(item) for item in task.bid_ids],
+            "selected_bid_ids": [int(item) for item in task.selected_bid_ids],
+            "total_cost": int(task.total_cost),
+            "definition_hash": str(task.definition_hash),
+            "solution_hash": str(task.solution_hash),
+            "matrix_hash": str(task.matrix_hash),
+            "reason": str(task.reason),
+        }
+
+    @gl.public.view
+    def get_requirement(self, requirement_id: u256) -> dict:
+        requirement = self._requirement(requirement_id)
+        return {
+            "id": int(requirement_id),
+            "task_id": int(requirement.task_id),
+            "label": str(requirement.label),
+            "description": str(requirement.description),
+            "min_coverage": int(requirement.min_coverage),
+        }
+
+    @gl.public.view
+    def get_bid(self, bid_id: u256) -> dict:
+        bid = self._bid(bid_id)
+        return {
+            "id": int(bid_id),
+            "task_id": int(bid.task_id),
+            "profile_id": int(bid.profile_id),
+            "bidder": str(bid.bidder),
+            "price": int(bid.price),
+            "status": int(bid.status),
+            "qualification_ids": [int(item) for item in bid.qualification_ids],
+        }
+
+    @gl.public.view
+    def get_qualification(self, qualification_id: u256) -> dict:
+        record = self._qualification(qualification_id)
+        return {
+            "id": int(qualification_id),
+            "task_id": int(record.task_id),
+            "bid_id": int(record.bid_id),
+            "requirement_id": int(record.requirement_id),
+            "resolver": str(record.resolver),
+            "verdict": int(record.verdict),
+            "verdict_name": qualification_name(int(record.verdict)),
+            "reason": str(record.reason),
+            "evidence": str(record.evidence),
+            "source_url": str(record.source_url),
+            "resolved_at": int(record.resolved_at),
+            "receipt_hash": str(record.receipt_hash),
+        }
+
+    @gl.public.view
+    def get_solution(self, task_id: u256) -> dict:
+        task = self._task(task_id)
+        selected = []
+        for bid_id in task.selected_bid_ids:
+            bid = self._bid(bid_id)
+            selected.append({
+                "bid_id": int(bid_id),
+                "profile_id": int(bid.profile_id),
+                "bidder": str(bid.bidder),
+                "price": int(bid.price),
+            })
+        return {
+            "task_id": int(task_id),
+            "status": int(task.status),
+            "status_name": task_name(int(task.status)),
+            "definition_hash": str(task.definition_hash),
+            "matrix_hash": str(task.matrix_hash),
+            "solution_hash": str(task.solution_hash),
+            "total_cost": int(task.total_cost),
+            "selected": selected,
+            "reason": str(task.reason),
+        }
+
+    @gl.public.view
+    def is_solution(self, task_id: u256, expected_definition_hash: str, expected_solution_hash: str) -> bool:
+        task = self._task(task_id)
+        return (
+            int(task.status) == TASK_SOLVED
+            and str(task.definition_hash) != ""
+            and str(task.solution_hash) != ""
+            and str(task.definition_hash) == str(expected_definition_hash)
+            and str(task.solution_hash) == str(expected_solution_hash)
+        )
+
+    @gl.public.view
+    def is_qualification(self, qualification_id: u256, expected_receipt_hash: str) -> bool:
+        record = self._qualification(qualification_id)
+        return str(record.receipt_hash) != "" and str(record.receipt_hash) == str(expected_receipt_hash)
+
+    @gl.public.view
+    def is_solution_bundle(
+        self,
+        task_id: u256,
+        expected_definition_hash: str,
+        expected_matrix_hash: str,
+        expected_solution_hash: str,
+    ) -> bool:
+        task = self._task(task_id)
+        return (
+            int(task.status) == TASK_SOLVED
+            and str(task.definition_hash) != ""
+            and str(task.matrix_hash) != ""
+            and str(task.solution_hash) != ""
+            and str(task.definition_hash) == str(expected_definition_hash)
+            and str(task.matrix_hash) == str(expected_matrix_hash)
+            and str(task.solution_hash) == str(expected_solution_hash)
+        )
+
+    @gl.public.view
+    def get_status_dictionary(self) -> dict:
+        return {
+            "provider": {"DRAFT": PROFILE_DRAFT, "SEALED": PROFILE_SEALED, "CANCELLED": PROFILE_CANCELLED},
+            "task": {
+                "DRAFT": TASK_DRAFT,
+                "BIDDING": TASK_BIDDING,
+                "QUALIFYING": TASK_QUALIFYING,
+                "SOLVED": TASK_SOLVED,
+                "UNSATISFIABLE": TASK_UNSATISFIABLE,
+                "CANCELLED": TASK_CANCELLED,
+            },
+            "bid": {
+                "ACTIVE": BID_ACTIVE,
+                "WITHDRAWN": BID_WITHDRAWN,
+                "SELECTED": BID_SELECTED,
+                "NOT_SELECTED": BID_NOT_SELECTED,
+            },
+            "qualification": {
+                "QUALIFIED": QUALIFIED,
+                "NOT_QUALIFIED": NOT_QUALIFIED,
+                "AMBIGUOUS": AMBIGUOUS,
+                "UNAVAILABLE": UNAVAILABLE,
+            },
+            "admission": {
+                "OPEN": ADMISSION_OPEN,
+                "FROZEN_PROFILES": ADMISSION_FROZEN_PROFILES,
+            },
+        }
