@@ -77,11 +77,18 @@ project was renamed from `COALITION` to `OPTIMA` (class `Optima`, classifier
 - Deployed via: GenLayer Studio (web `run-debug`), not the pinned CLI flow in step 6
 - Explorer: `https://explorer-studio.genlayer.com/address/0x10b35C8ea408A98e59822e39134Fc423677fcF8b`
 - Studio: `https://studio.genlayer.com/?import-contract=0x10b35C8ea408A98e59822e39134Fc423677fcF8b`
-- Deployment transaction: _not yet recorded_
-- Deployment result: _not yet recorded_
+- Deployment transaction: _not recorded_
+- Deployment result: _not verified_
+
+Verified read-only against `https://studio.genlayer.com/api`: `eth_chainId`
+returns `0xf22f` = `61999`, and `gen_getContractSchema` for this address returns
+a 26-method schema that matches `contracts/optima.py` exactly, with no method
+present on only one side. The explorer labels this contract `OPTIMA`, where the
+pre-rename address is labelled `COALITION`.
 
 Fill the deployment transaction and result above from the explorer before
-presenting this address as final evidence.
+presenting this address as final evidence, and exercise at least one full
+task/qualification/solve lifecycle against it.
 
 The pre-rename Studionet deployments were removed from this document, along with
 their transaction hashes, receipts and lifecycle readbacks, so that this file

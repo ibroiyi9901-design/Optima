@@ -366,11 +366,16 @@ The current renamed source is deployed on Studionet 61999 via GenLayer Studio.
 | Explorer | <https://explorer-studio.genlayer.com/address/0x10b35C8ea408A98e59822e39134Fc423677fcF8b> |
 | Studio | <https://studio.genlayer.com/?import-contract=0x10b35C8ea408A98e59822e39134Fc423677fcF8b> |
 
+Verified read-only against the Studionet RPC: `eth_chainId` returns `61999`,
+and `gen_getContractSchema` for this address returns a 26-method schema that
+matches `contracts/optima.py` exactly.
+
 Still to be copied from the explorer before this address is treated as final
 evidence:
 
-- deployment transaction: _not yet recorded_
-- deployment result: _not yet recorded_
+- deployment transaction: _not recorded_
+- deployment result: _not verified_
+- on-chain task/qualification/solve lifecycle: _not exercised_
 
 ## Reviewer path
 

@@ -59,12 +59,44 @@ tree:
 - Deployed via: GenLayer Studio
 - Explorer: `https://explorer-studio.genlayer.com/address/0x10b35C8ea408A98e59822e39134Fc423677fcF8b`
 - Studio: `https://studio.genlayer.com/?import-contract=0x10b35C8ea408A98e59822e39134Fc423677fcF8b`
-- Deployment transaction: _not yet recorded_
-- Deployment result: _not yet recorded_
-- On-chain task/qualification/solve lifecycle on this address: _not yet recorded_
+
+### Verified against the live chain
+
+Queried read-only against `https://studio.genlayer.com/api`:
+
+- `eth_chainId` returns `0xf22f` = `61999`, confirming Studionet and not studio-dev.
+- `gen_getContractSchema` for this address returns a full schema, so the
+  contract is deployed and recognised by the node.
+- The deployed method surface matches `contracts/optima.py` **exactly**: 26
+  methods on chain, 26 `def`s in source, with no method present on only one
+  side. The 11 read-only views (`get_task`, `get_bid`, `get_qualification`,
+  `get_solution`, `get_status_dictionary`, `is_qualification`, `is_solution`,
+  `is_solution_bundle`, `get_provider`, `get_requirement`, `get_evidence_source`)
+  are all present.
+- The explorer labels this contract `OPTIMA`, where the pre-rename address is
+  labelled `COALITION`, confirming the renamed source is what is deployed.
+
+### Not verified
+
+These fields are deliberately left unfilled rather than guessed:
+
+- deployment transaction: _not recorded_
+- deployment result (`FINALIZED / … / SUCCESS`): _not verified_
+- on-chain task/qualification/solve lifecycle: _not exercised_
+
+Two notes on why. The explorer address view exposes no transaction list for this
+address, so the deployment transaction hash could not be recovered from it, and
+finality was not asserted. Contract state could not be read either: `gen_call`
+on this endpoint requires a calldata envelope that the public RPC does not
+document, so `get_status_dictionary` could not be invoked to check whether any
+task, bid or qualification exists yet.
+
+Note also that `eth_getCode` returns `0x` for this address, but it does so for
+every address on this network, including previously finalized deployments. It
+is a non-functional stub here and is not evidence of a missing contract.
 
 The Direct Mode figures above (26 passed, commit `7fc99f2a…`) certify the
 **pre-rename** source. The renamed source has not yet been re-certified against
-the pinned toolchain, and this file no longer carries any receipt, hash or
-verdict for `0x10b35C8e…`. Populate the fields above only from finalized 61999
-receipts for that address; do not carry prior values forward.
+the pinned toolchain, and this file carries no receipt, hash or verdict for
+`0x10b35C8e…`. Populate the fields above only from finalized 61999 receipts for
+that address; do not carry prior values forward.
