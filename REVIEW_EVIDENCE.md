@@ -25,9 +25,19 @@ only address that matches the current source.
 The runner hash above is corroborated on chain: the `Depends` header of the
 deployed source names the same `py-genlayer:1jb45aa8…` bundle.
 
-The per-test pass/fail tally was not read back from the CI log, which the API no
-longer returns for this run. The 26-test figure is the size of the suite in this
-tree, confirmed locally; the run's own conclusion is `success`.
+Read back from the CI log of the run above:
+
+```
+26 passed in 34.24s
+```
+
+- passed: **26**
+- failed: **0**
+
+`contracts/optima.py` at commit `2d9e17d…` contains zero occurrences of
+`coalition`, so the prose sweep is already inside the certified tree; the only
+surviving `coalition` strings are prose in `README.md` and `DEPLOYMENT.md`
+describing the rename itself.
 
 ## Liveness hardening
 
@@ -126,10 +136,9 @@ Note also that `eth_getCode` returns `0x` for this address, but it does so for
 every address on this network, including previously finalized deployments. It
 is a non-functional stub here and is not evidence of a missing contract.
 
-The Direct Mode run above (26-test suite, conclusion `success`, commit
-`2d9e17d9…`) certifies the source as of that commit. The current tree adds the
-`coalition` to `team` prose sweep on top of it, so the renamed source has not
-been re-certified against the pinned toolchain since that change. This file
-carries no receipt, hash or verdict for `0x10b35C8e…`. Populate the fields above
-only from finalized 61999 receipts for that address; do not carry prior values
-forward.
+The Direct Mode run above certifies the renamed OPTIMA source at commit
+`2d9e17d9…`: 26 passed, 0 failed, conclusion `success`, against the pinned
+0.39.1 / v0.29.2 / v0.3.0-rc7 toolchain. What that run does **not** cover is the
+live deployment: this file still carries no finalized receipt, hash or verdict
+for `0x10b35C8e…`. Populate the fields above only from finalized 61999 receipts
+for that address; do not carry prior values forward.
