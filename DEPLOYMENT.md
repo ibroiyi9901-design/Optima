@@ -8,9 +8,9 @@ This repository is intentionally **not** configured for Studio-dev / 61997.
 
 ## 1. Clone
 
-`git clone https://github.com/ometere123/optima.git`
+`git clone https://github.com/ibroiyi9901-design/Optima.git`
 
-`cd optima`
+`cd Optima`
 
 ## 2. Install the repository-local stable CLI
 
@@ -71,8 +71,10 @@ project was renamed from `COALITION` to `OPTIMA` (class `Optima`, classifier
 
 - Network: Studionet, chain ID `61999`
 - RPC: `https://studio.genlayer.com/api`
-- Source SHA-256: `3f2b5f4600eb83554e35567400a6a33d8c64f3c092f3a153ba6a1bf2a04fdc02`
-- Source bytes: `56042`
+- Source SHA-256 (deployed): `da923cab65c336b98cfaf9df8d320bb889a202ee6ac4bf91ad1700c1ee22b31c`
+- Deployed bytes: `56047`
+- Source SHA-256 (repository): `3f2b5f4600eb83554e35567400a6a33d8c64f3c092f3a153ba6a1bf2a04fdc02`
+- Repository bytes: `56042`
 - Contract: `0x10b35C8ea408A98e59822e39134Fc423677fcF8b`
 - Deployed via: GenLayer Studio (web `run-debug`), not the pinned CLI flow in step 6
 - Explorer: `https://explorer-studio.genlayer.com/address/0x10b35C8ea408A98e59822e39134Fc423677fcF8b`
@@ -85,6 +87,13 @@ returns `0xf22f` = `61999`, and `gen_getContractSchema` for this address returns
 a 26-method schema that matches `contracts/optima.py` exactly, with no method
 present on only one side. The explorer labels this contract `OPTIMA`, where the
 pre-rename address is labelled `COALITION`.
+
+The deployed source is three lines behind the repository source, all of them
+prose (`coalition` to `team` at lines 369, 418 and 1193). One sits inside an AI
+classifier prompt and one is a `task.reason` string, so the interface and the
+selection logic are unaffected, but the two hashes above do not match. Redeploy
+from the current tree to make them agree; `scripts/live_evidence.py` blocks until
+they do.
 
 Fill the deployment transaction and result above from the explorer before
 presenting this address as final evidence, and exercise at least one full

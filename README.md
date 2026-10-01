@@ -361,14 +361,19 @@ The current renamed source is deployed on Studionet 61999 via GenLayer Studio.
 | --- | --- |
 | Contract file | `contracts/optima.py` |
 | Contract address | `0x10b35C8ea408A98e59822e39134Fc423677fcF8b` |
-| Source SHA-256 | `3f2b5f4600eb83554e35567400a6a33d8c64f3c092f3a153ba6a1bf2a04fdc02` |
-| Source bytes | `56042` |
+| Deployed source SHA-256 | `da923cab65c336b98cfaf9df8d320bb889a202ee6ac4bf91ad1700c1ee22b31c` (56047 bytes) |
+| Repository source SHA-256 | `3f2b5f4600eb83554e35567400a6a33d8c64f3c092f3a153ba6a1bf2a04fdc02` (56042 bytes) |
 | Explorer | <https://explorer-studio.genlayer.com/address/0x10b35C8ea408A98e59822e39134Fc423677fcF8b> |
 | Studio | <https://studio.genlayer.com/?import-contract=0x10b35C8ea408A98e59822e39134Fc423677fcF8b> |
 
 Verified read-only against the Studionet RPC: `eth_chainId` returns `61999`,
 and `gen_getContractSchema` for this address returns a 26-method schema that
 matches `contracts/optima.py` exactly.
+
+The deployed source is three prose lines behind the current tree
+(`coalition` → `team`), so the two hashes above differ. Interface and selection
+logic are identical; see [`REVIEW_EVIDENCE.md`](REVIEW_EVIDENCE.md) for the
+line-by-line diff. Redeploy to make them agree.
 
 Still to be copied from the explorer before this address is treated as final
 evidence:
